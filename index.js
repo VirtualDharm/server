@@ -1,12 +1,10 @@
 // server/index.js
-// Simple token + signaling server for local/dev testing.
-// npm i express socket.io cors agora-access-token
-
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { RtcTokenBuilder, RtcRole } = require('agora-access-token');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 const APP_ID = process.env.APP_ID || '60bdf4f5f1b641f583d20d28d7a923d1';
 const APP_CERTIFICATE = process.env.APP_CERTIFICATE || '85ffadb2cbf34c4b8b7d109b7f5c8072';
@@ -62,7 +60,7 @@ app.get('/rtcToken', (req, res) => {
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-// map userId -> socketId
+// userId -> { socketId?, pushToken? }
 const clients = {};
 
 io.on('connection', (socket) => {
@@ -70,28 +68,33 @@ io.on('connection', (socket) => {
 
   socket.on('register', ({ userId }) => {
     if (!userId) return;
-    clients[userId] = socket.id;
+    if (!clients[userId]) clients[userId] = {};
+    clients[userId].socketId = socket.id;
     socket.data.userId = userId;
     console.log(`registered ${userId} -> ${socket.id}`);
   });
 
-  // caller -> server: { to: 'doctor', from: 'patient', channel, callerUid }
+  socket.on('register_push', ({ userId, pushToken }) => {
+    if (!userId || !pushToken) return;
+    if (!clients[userId]) clients[userId] = {};
+    clients[userId].pushToken = pushToken;
+    console.log(`registered push token for ${userId}`);
+  });
+
   socket.on('call', (payload) => {
     const { to } = payload;
-    const toSocket = clients[to];
-    if (toSocket) {
-      io.to(toSocket).emit('incoming_call', payload);
-      console.log(`forwarding incoming_call from ${payload.from} to ${to}`);
+    const toClient = clients[to];
+    if (toClient?.socketId) {
+      io.to(toClient.socketId).emit('incoming_call', payload);
+      console.log(`forwarded incoming_call from ${payload.from} to ${to}`);
     } else {
       io.to(socket.id).emit('callee_unavailable', { to });
       console.log(`callee ${to} unavailable`);
     }
   });
 
-  // callee accepts -> server forwards 'call_accepted' to caller
-  // payload: { to: 'patient', from: 'doctor', channel, calleeUid }
   socket.on('accept_call', (payload) => {
-    const toSocket = clients[payload.to];
+    const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('call_accepted', payload);
       console.log(`call accepted by ${payload.from} forwarded to ${payload.to}`);
@@ -99,31 +102,55 @@ io.on('connection', (socket) => {
   });
 
   socket.on('reject_call', (payload) => {
-    const toSocket = clients[payload.to];
+    const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('call_rejected', payload);
     }
   });
 
-  socket.on('disconnect', () => {
-    const uid = socket.data.userId;
-    if (uid) {
-      delete clients[uid];
-      console.log('disconnected and removed', uid);
-    }
-  });
-
   socket.on('end_call', (payload) => {
-    const toSocket = clients[payload.to];
+    const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('end_call', payload);
       console.log(`call ended by ${payload.from} -> notified ${payload.to}`);
     }
   });
 
+  socket.on('disconnect', () => {
+    const uid = socket.data.userId;
+    if (uid) {
+      if (clients[uid]) delete clients[uid].socketId;
+      console.log('disconnected and removed socketId for', uid);
+    }
+  });
+});
+
+// REST endpoint for sending push (used by patient-app)
+app.post('/sendPush', async (req, res) => {
+  const { to, from, channel } = req.body;
+  const toClient = clients[to];
+  if (!toClient?.pushToken) return res.status(400).json({ error: 'No push token for recipient' });
+
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: toClient.pushToken,
+        title: 'Incoming Call',
+        body: `${from} is calling you`,
+        data: { type: 'incoming_call', from, channel },
+      }),
+    });
+    console.log(`push sent to ${to}`);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('push error', err);
+    return res.status(500).json({ error: 'push_failed' });
+  }
 });
 
 server.listen(PORT, () => {
-  console.log(`Token + Signaling server running on http://0.0.0.0:${PORT}`);
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
 
