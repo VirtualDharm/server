@@ -105,6 +105,19 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('end_call', (payload) => {
+    const { to, from, channel } = payload;
+    console.log(`call ended by ${from}, notifying ${to} (channel ${channel})`);
+
+    const toSocket = clients[to];
+    if (toSocket) {
+      io.to(toSocket).emit('call_ended', { from, channel });
+    }
+
+    // Optionally confirm back to the caller
+    io.to(socket.id).emit('call_ended_ack', { channel });
+  });
+
   socket.on('disconnect', () => {
     const uid = socket.data.userId;
     if (uid) {
@@ -117,4 +130,5 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
   console.log(`Token + Signaling server running on http://0.0.0.0:${PORT}`);
 });
+
 
