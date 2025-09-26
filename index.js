@@ -112,6 +112,15 @@ io.on('connection', (socket) => {
       console.log('disconnected and removed', uid);
     }
   });
+
+  socket.on('end_call', (payload) => {
+    const toSocket = clients[payload.to];
+    if (toSocket) {
+      io.to(toSocket).emit('end_call', payload);
+      console.log(`call ended by ${payload.from} -> notified ${payload.to}`);
+    }
+  });
+
 });
 
 server.listen(PORT, () => {
