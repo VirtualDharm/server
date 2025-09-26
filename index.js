@@ -25,6 +25,12 @@ app.use(express.json());
  * GET /rtcToken?channelName=...&uid=12345
  * Returns a short-lived RTC token bound to numeric UID
  */
+
+// Simple health check route
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
+
 app.get('/rtcToken', (req, res) => {
   const { channelName, uid } = req.query;
   if (!channelName || !uid) return res.status(400).json({ error: 'channelName and uid required' });
@@ -111,3 +117,4 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
   console.log(`Token + Signaling server running on http://0.0.0.0:${PORT}`);
 });
+
