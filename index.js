@@ -26,19 +26,29 @@ app.use(express.json());
 
 // Simple health check route
 app.get('/health', (req, res) => {
+  console.log('Health check requested');
   res.status(200).json({ status: 'ok', message: 'Server is running' });
+  console.log('Health check response sent');
 });
 
 app.get('/rtcToken', (req, res) => {
   const { channelName, uid } = req.query;
-  if (!channelName || !uid) return res.status(400).json({ error: 'channelName and uid required' });
+  console.log(`RTC token request: channelName=${channelName}, uid=${uid}`);
+  if (!channelName || !uid) {
+    console.log('Missing channelName or uid in RTC token request');
+    return res.status(400).json({ error: 'channelName and uid required' });
+  }
 
   const uidInt = Number(uid);
-  if (!Number.isFinite(uidInt)) return res.status(400).json({ error: 'uid must be numeric' });
+  if (!Number.isFinite(uidInt)) {
+    console.log('Invalid uid in RTC token request - not numeric');
+    return res.status(400).json({ error: 'uid must be numeric' });
+  }
 
   const expireSeconds = parseInt(process.env.TOKEN_EXPIRE_S || '3600', 10); // 1 hour default
   const currentTs = Math.floor(Date.now() / 1000);
   const privilegeExpiredTs = currentTs + expireSeconds;
+  console.log(`Generating RTC token: expireSeconds=${expireSeconds}, currentTs=${currentTs}, privilegeExpiredTs=${privilegeExpiredTs}`);
 
   try {
     const token = RtcTokenBuilder.buildTokenWithUid(
@@ -49,9 +59,10 @@ app.get('/rtcToken', (req, res) => {
       RtcRole.PUBLISHER,
       privilegeExpiredTs
     );
+    console.log(`RTC token generated successfully for uid=${uidInt}, channelName=${channelName}`);
     return res.json({ rtcToken: token, uid: uidInt, channelName });
   } catch (err) {
-    console.error('token error', err);
+    console.error('Token generation error:', err);
     return res.status(500).json({ error: 'token_generation_failed' });
   }
 });
@@ -64,75 +75,101 @@ const io = new Server(server, { cors: { origin: '*' } });
 const clients = {};
 
 io.on('connection', (socket) => {
-  console.log('socket connected', socket.id);
+  console.log('Socket connected:', socket.id);
 
   socket.on('register', ({ userId }) => {
-    if (!userId) return;
+    console.log(`Register event received: userId=${userId}`);
+    if (!userId) {
+      console.log('Missing userId in register event');
+      return;
+    }
     if (!clients[userId]) clients[userId] = {};
     clients[userId].socketId = socket.id;
     socket.data.userId = userId;
-    console.log(`registered ${userId} -> ${socket.id}`);
+    console.log(`Registered userId=${userId} -> socketId=${socket.id}`);
   });
 
   socket.on('register_push', ({ userId, pushToken }) => {
-    if (!userId || !pushToken) return;
+    console.log(`Register push event received: userId=${userId}, pushToken=${pushToken}`);
+    if (!userId || !pushToken) {
+      console.log('Missing userId or pushToken in register_push event');
+      return;
+    }
     if (!clients[userId]) clients[userId] = {};
     clients[userId].pushToken = pushToken;
-    console.log(`registered push token for ${userId}`);
+    console.log(`Registered push token for userId=${userId}: ${pushToken}`);
   });
 
   socket.on('call', (payload) => {
+    console.log('Call event received:', payload);
     const { to } = payload;
     const toClient = clients[to];
     if (toClient?.socketId) {
       io.to(toClient.socketId).emit('incoming_call', payload);
-      console.log(`forwarded incoming_call from ${payload.from} to ${to}`);
+      console.log(`Forwarded incoming_call from ${payload.from} to ${to} (socketId=${toClient.socketId})`);
     } else {
       io.to(socket.id).emit('callee_unavailable', { to });
-      console.log(`callee ${to} unavailable`);
+      console.log(`Callee ${to} unavailable - notified caller`);
     }
   });
 
   socket.on('accept_call', (payload) => {
+    console.log('Accept call event received:', payload);
     const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('call_accepted', payload);
-      console.log(`call accepted by ${payload.from} forwarded to ${payload.to}`);
+      console.log(`Call accepted by ${payload.from} - forwarded to ${payload.to} (socketId=${toSocket})`);
+    } else {
+      console.log(`Cannot forward accept_call - no socket for ${payload.to}`);
     }
   });
 
   socket.on('reject_call', (payload) => {
+    console.log('Reject call event received:', payload);
     const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('call_rejected', payload);
+      console.log(`Call rejected by ${payload.from} - forwarded to ${payload.to} (socketId=${toSocket})`);
+    } else {
+      console.log(`Cannot forward reject_call - no socket for ${payload.to}`);
     }
   });
 
   socket.on('end_call', (payload) => {
+    console.log('End call event received:', payload);
     const toSocket = clients[payload.to]?.socketId;
     if (toSocket) {
       io.to(toSocket).emit('end_call', payload);
-      console.log(`call ended by ${payload.from} -> notified ${payload.to}`);
+      console.log(`Call ended by ${payload.from} - notified ${payload.to} (socketId=${toSocket})`);
+    } else {
+      console.log(`Cannot forward end_call - no socket for ${payload.to}`);
     }
   });
 
   socket.on('disconnect', () => {
     const uid = socket.data.userId;
+    console.log(`Socket disconnected: socketId=${socket.id}, userId=${uid}`);
     if (uid) {
       if (clients[uid]) delete clients[uid].socketId;
-      console.log('disconnected and removed socketId for', uid);
+      console.log(`Disconnected and removed socketId for userId=${uid}`);
     }
   });
 });
 
 // REST endpoint for sending push (used by patient-app)
 app.post('/sendPush', async (req, res) => {
+  console.log('sendPush endpoint called with body:', req.body);
   const { to, from, channel } = req.body;
   const toClient = clients[to];
-  if (!toClient?.pushToken) return res.status(400).json({ error: 'No push token for recipient' });
+  if (!toClient?.pushToken) {
+    console.log(`No push token for recipient userId=${to}`);
+    return res.status(400).json({ error: 'No push token for recipient' });
+  }
+
+  console.log(`Preparing to send push to userId=${to}, pushToken=${toClient.pushToken}, from=${from}, channel=${channel}`);
 
   try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
+    const pushResponse = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -142,10 +179,16 @@ app.post('/sendPush', async (req, res) => {
         data: { type: 'incoming_call', from, channel },
       }),
     });
-    console.log(`push sent to ${to}`);
+    console.log(`Push sent to userId=${to} - response status: ${pushResponse.status}`);
+    if (!pushResponse.ok) {
+      const errorText = await pushResponse.text();
+      console.error(`Push send failed with status ${pushResponse.status}: ${errorText}`);
+    } else {
+      console.log(`Push sent successfully to userId=${to}`);
+    }
     return res.json({ ok: true });
   } catch (err) {
-    console.error('push error', err);
+    console.error('Push send error:', err);
     return res.status(500).json({ error: 'push_failed' });
   }
 });
@@ -153,4 +196,3 @@ app.post('/sendPush', async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
-
