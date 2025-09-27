@@ -4,7 +4,8 @@ const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { RtcTokenBuilder, RtcRole } = require('agora-access-token');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+// ✅ No need for node-fetch, Node.js 18+ has fetch built-in
 
 const APP_ID = process.env.APP_ID || '60bdf4f5f1b641f583d20d28d7a923d1';
 const APP_CERTIFICATE = process.env.APP_CERTIFICATE || '85ffadb2cbf34c4b8b7d109b7f5c8072';
@@ -179,6 +180,7 @@ app.post('/sendPush', async (req, res) => {
         data: { type: 'incoming_call', from, channel },
       }),
     });
+
     console.log(`Push sent to userId=${to} - response status: ${pushResponse.status}`);
     if (!pushResponse.ok) {
       const errorText = await pushResponse.text();
