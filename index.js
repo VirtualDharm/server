@@ -186,7 +186,7 @@ app.post('/sendPush', async (req, res) => {
       const errorText = await pushResponse.text();
       console.error(`Push send failed with status ${pushResponse.status}: ${errorText}`);
     } else {
-      console.log(`Push sent successfully to userId=${to}`);
+      console.log(`Push sent successfully to userId=${to} & pushToken=${toClient.pushToken}`);
     }
     return res.json({ ok: true });
   } catch (err) {
