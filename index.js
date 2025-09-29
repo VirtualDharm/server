@@ -177,7 +177,14 @@ app.post('/sendPush', async (req, res) => {
         to: toClient.pushToken,
         title: 'Incoming Call',
         body: `${from} is calling you`,
-        data: { type: 'incoming_call', from, channel },
+        data: {
+          type: 'incoming_call',
+          from,
+          channel,
+          patientId: '12345',
+          name: 'Testing Patient',
+          symptoms: 'Fever, cough',
+        },
       }),
     });
 
