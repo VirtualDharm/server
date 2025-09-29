@@ -177,6 +177,7 @@ app.post('/sendPush', async (req, res) => {
         to: toClient.pushToken,
         title: 'Incoming Call',
         body: `${from} is calling you`,
+        sound: 'ringtone.wav',   // 👈 custom ringtone
         data: {
           type: 'incoming_call',
           from,
